@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, minimum-scale=1.0">
+    <title>汽水音乐远程控制</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+<div class="notification" id="notification"></div>
+
+<div class="container">
+    <h3><i class="fas fa-music"></i> 汽水音乐远程控制</h3>
+    <div class="player-info">
+        <div class="player-title">当前状态: <span id="player-state">未连接</span></div>
+        <div class="player-status" id="connection-status">等待连接汽水音乐...</div>
+    </div>
+    <div class="control-panel">
+        <button class="btn btn-play btn-lg btn-icon control-wide" onclick="playPause()">
+            <i class="fas fa-play"></i>播放/暂停
+        </button>
+        <div class="control-row">
+            <button class="btn btn-control btn-lg btn-icon" onclick="prev()">
+                <i class="fas fa-step-backward"></i>上一首
+            </button>
+            <button class="btn btn-control btn-lg btn-icon" onclick="next()">
+                <i class="fas fa-step-forward"></i>下一首
+            </button>
+        </div>
+        <div class="control-row">
+            <button class="btn btn-volume btn-lg btn-icon" onclick="volDown()">
+                <i class="fas fa-volume-down"></i>音量-
+            </button>
+            <button class="btn btn-volume btn-lg btn-icon" onclick="volUp()">
+                <i class="fas fa-volume-up"></i>音量+
+            </button>
+        </div>
+        <div class="control-row" style="justify-content: center;">
+            <button class="btn btn-collect btn-lg btn-icon" id="collect-btn" onclick="collect()" title="收藏当前歌曲" style="flex:1;">
+                <i class="fa-solid fa-heart"></i>收藏
+            </button>
+        </div>
+    </div>
+    <div class="msg" id="msg"></div>
+    <div class="text-center text-muted mt-4" style="font-size:0.95em;">
+        请确保汽水音乐客户端已打开<br>
+        <i class="fas fa-mobile-alt"></i> 本页面可添加到手机桌面当App使用
+    </div>
+</div>
+
+<script src="collect.js"></script>
+<script>
+// 收藏按钮禁用逻辑
+function setCollectBtnEnabled(enabled) {
+    const btn = document.getElementById('collect-btn');
+    if (btn) btn.disabled = !enabled;
+}
+// 监听连接状态变化，未连接时禁用收藏按钮
+function updateCollectBtnByState() {
+    const state = document.getElementById('player-state').textContent;
+    setCollectBtnEnabled(state && state !== '未连接');
+}
+document.addEventListener('DOMContentLoaded', function() {
+    updateCollectBtnByState();
+    // 监听状态变化（假设有其它js会动态修改player-state）
+    const observer = new MutationObserver(updateCollectBtnByState);
+    const stateSpan = document.getElementById('player-state');
+    if (stateSpan) observer.observe(stateSpan, { childList: true });
+});
+</script>
+</body>
+</html>
