@@ -2,16 +2,16 @@
 
 ## 项目简介
 
-A to W Music Player 是一个允许通过网页远程控制 Windows 电脑音乐播放的跨平台应用。用户可在浏览器端添加、播放、暂停、切换电脑端的本地音乐文件，实现无线遥控。
+A to W Music Player 是一个允许通过局域网的网页远程控制 Windows 电脑汽水音乐播放的应用。用户可在浏览器端添加、播放、暂停、音量+ - 和收藏，实现无线遥控。
 
 ---
 
 ## 技术原理
 
 - **通信方式**：Web 客户端通过 HTTP 请求与 Windows 端 Flask 服务器通信，发送控制指令和获取播放列表。
-- **音频播放**：Windows 端通过 Python 实现本地音乐文件的播放、暂停、停止、进度和音量调节（已不依赖 VLC 或 python-vlc）。
+- **音频播放**：Windows 端通过 Python 实现本地音乐文件的播放、暂停、停止、和音量调节、收藏（已不依赖 VLC 或 python-vlc）。
 - **元数据处理**：使用 `mutagen` 解析音乐文件的标签信息（如歌名、歌手等）。
-- **Web 客户端**：通过浏览器访问，提供现代化 UI，支持播放控制和列表管理。
+- **Web 客户端**：通过浏览器访问，提供现代化 UI，支持播放控制。
 
 ---
 
@@ -19,14 +19,18 @@ A to W Music Player 是一个允许通过网页远程控制 Windows 电脑音乐
 
 ```
 AtoWMusicServer.spec           # PyInstaller 打包配置
-build_win_exe.bat              # Windows 一键打包脚本
 requirements.txt               # Python 依赖列表
+music_server/                  # Windows 服务端的分离代码
+  ├─ controller.py             # 控制类
+  ├─ utils.py                  # 工具类
+  └─ web.py                    # web通讯api路由
 server.py                      # Windows 端主服务端代码
 web_client/                    # Web 客户端前端页面及资源
   ├─ index.html                # 主页面
   ├─ index.css                 # 样式文件
   └─ collect.js                # 前端逻辑脚本
 build/                         # Windows 端打包输出目录
+dist/                          # Windows 端打包exe目录
 ```
 
 ---
