@@ -3,7 +3,8 @@ def get_static_folder(sys, __file__):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, 'web_client')
     else:
-        return os.path.join(os.path.dirname(__file__), 'web_client')
+        # 修正为项目根目录下的 web_client
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web_client'))
 
 def get_local_ip():
     import socket

@@ -1,5 +1,6 @@
 import psutil
 from pywinauto.keyboard import send_keys
+from .logger import Logger
 
 class QishuiController:
     def __init__(self):
@@ -13,9 +14,12 @@ class QishuiController:
                 send_keys(keys)
                 return {'status': 'ok'}
             else:
+                Logger.warning("未检测到汽水音乐进程")
                 return {'status': 'error', 'message': '未检测到汽水音乐进程'}
         except Exception as e:
-            return {'status': 'error', 'message': f'命令发送失败: {str(e)}'}
+            error_msg = f'命令发送失败: {str(e)}'
+            Logger.error(error_msg)
+            return {'status': 'error', 'message': error_msg}
 
     def play_pause(self):
         result = self._send_command('^%p')

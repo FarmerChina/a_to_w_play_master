@@ -16,6 +16,7 @@ except ImportError:
     pystray = None
 from music_server.web import app
 from music_server.utils import get_local_ip
+from music_server.logger import Logger
 
 LOCAL_IP = get_local_ip()
 
@@ -27,7 +28,7 @@ class ServerUI:
         master.configure(bg="#f7f7f7")
         self.is_running = False
         self.server_thread = None
-        self.log_queue = queue.Queue()
+        self.log_queue = Logger.get_queue()
         self.port = tk.IntVar(value=5000)
         self.tray_icon = None
         self.soda_monitor_thread = None
@@ -112,10 +113,18 @@ class ServerUI:
     def _poll_log(self):
         try:
             while True:
-                msg, level = self.log_queue.get_nowait()
+                item = self.log_queue.get_nowait()
+                if isinstance(item, tuple):
+                    if len(item) == 2:
+                        msg, level = item
+                    elif len(item) == 1:
+                        msg, level = item[0], "info"
+                    else:
+                        msg, level = str(item), "info"
+                else:
+                    msg, level = str(item), "info"
                 self.log_area.config(state='normal')
                 tag = level
-                # 总是先定义tag_config，避免tag_cget异常
                 color = {"info":"#333","warn":"#e67e22","error":"#e53935"}.get(level, "#333")
                 self.log_area.tag_config(tag, foreground=color)
                 self.log_area.insert(tk.END, msg + '\n', tag)
