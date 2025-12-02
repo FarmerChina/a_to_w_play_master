@@ -2,6 +2,7 @@ import os
 import sys
 import ctypes
 import threading
+import subprocess
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import webbrowser
@@ -236,6 +237,17 @@ class ServerUI:
                     
                     # 开启隧道
                     self.log("[远程] 正在建立隧道连接...", "info")
+                    
+                    # Windows下隐藏ngrok窗口
+                    if os.name == 'nt':
+                        try:
+                            startupinfo = subprocess.STARTUPINFO()
+                            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                            startupinfo.wShowWindow = subprocess.SW_HIDE
+                            conf.get_default().startupinfo = startupinfo
+                        except Exception:
+                            pass
+
                     self.remote_tunnel = ngrok.connect(self.port.get())
                     public_url = self.remote_tunnel.public_url
                     self.remote_url.set(public_url)

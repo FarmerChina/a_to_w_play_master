@@ -30,7 +30,14 @@ class QishuiController:
             Logger.info(f"执行远程命令: {cmd}")
             # 使用 shell=True 允许执行 shell 命令
             # 注意：这存在安全风险，但在个人使用的工具中通常可以接受
-            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, startupinfo=startupinfo)
             stdout, stderr = process.communicate()
             return {'status': 'ok', 'stdout': stdout, 'stderr': stderr}
         except Exception as e:
@@ -52,7 +59,14 @@ class QishuiController:
                         Logger.warning(f"os.startfile启动失败: {e1}，尝试使用subprocess...")
                         # 备用方案：使用 shell start 命令
                         work_dir = os.path.dirname(path)
-                        subprocess.Popen(f'start "" "{path}"', shell=True, cwd=work_dir)
+                        
+                        startupinfo = None
+                        if os.name == 'nt':
+                            startupinfo = subprocess.STARTUPINFO()
+                            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                            startupinfo.wShowWindow = subprocess.SW_HIDE
+                            
+                        subprocess.Popen(f'start "" "{path}"', shell=True, cwd=work_dir, startupinfo=startupinfo)
 
                     # 等待启动，最多等待15秒
                     for _ in range(30):
