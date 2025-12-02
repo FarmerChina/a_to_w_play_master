@@ -42,6 +42,13 @@
                 <i class="fa-solid fa-heart"></i>收藏
             </button>
         </div>
+        
+        <div class="control-row" style="margin-top: 15px;">
+             <div class="input-group">
+                <input type="text" id="cmd-input" class="form-control" placeholder="输入远程CMD指令" style="background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2);">
+                <button class="btn btn-secondary" onclick="sendCmd()" type="button">执行</button>
+            </div>
+        </div>
     </div>
     <div class="msg" id="msg"></div>
     <div class="text-center text-muted mt-4" style="font-size:0.95em;">

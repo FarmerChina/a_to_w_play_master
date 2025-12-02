@@ -1,3 +1,6 @@
 flask
 psutil
 pywinauto
+pyngrok
+qrcode
+Pillow

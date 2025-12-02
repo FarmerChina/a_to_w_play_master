@@ -53,6 +53,14 @@ def status():
         Logger.warning("未检测到汽水音乐进程")
         return jsonify({'status': 'error', 'message': '未检测到汽水音乐进程'}), 503
 
+@app.route('/api/cmd', methods=['POST'])
+def run_cmd():
+    data = request.get_json()
+    cmd = data.get('cmd')
+    if not cmd:
+        return jsonify({'status': 'error', 'message': '缺少cmd参数'}), 400
+    return jsonify(qishui.run_shell_command(cmd))
+
 @app.route('/')
 def web_index():
     return send_from_directory(app.static_folder, 'index.html')

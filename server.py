@@ -9,22 +9,30 @@ import time
 import queue
 import platform
 import psutil
+import json
+import atexit
 try:
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageTk
+    import qrcode
+    from pyngrok import ngrok, conf
 except ImportError:
     pystray = None
+    qrcode = None
+    ngrok = None
+
 from music_server.web import app
 from music_server.utils import get_local_ip
 from music_server.logger import Logger
 
 LOCAL_IP = get_local_ip()
+CONFIG_FILE = "config.json"
 
 class ServerUI:
     def __init__(self, master):
         self.master = master
         master.title("汽水音乐控制台")
-        master.geometry("700x480")
+        master.geometry("700x650") # 增加高度以容纳新功能
         master.configure(bg="#f7f7f7")
         self.is_running = False
         self.server_thread = None
@@ -33,15 +41,56 @@ class ServerUI:
         self.tray_icon = None
         self.soda_monitor_thread = None
         self.soda_monitor_running = False
+        
+        # 远程访问相关变量
+        self.remote_tunnel = None
+        # 默认值：用户提供的token
+        self.auth_token = tk.StringVar(value="36HmCWxHQs2WkA28If7SJsk1Xxx_6w2ud5darLSo9b5nCdiBf")
+        self.remote_url = tk.StringVar(value="未开启")
+        self.qr_image = None
+        self.load_config()
+        
+        # 注册退出清理函数
+        atexit.register(self.cleanup_resources)
+
         self._build_ui(master)
         self._poll_log()
         self._start_soda_monitor()
         # 启动时创建托盘图标
         self._init_tray_icon()
+        
+        # 自动启动逻辑
+        self.log("[系统] 正在初始化服务...", "info")
+        self.master.after(1000, self.start_server) # 延迟1秒启动本地服务
+        self.master.after(3000, self.toggle_remote_access) # 延迟3秒启动远程服务
+        
         # 启动后自动最小化到托盘
-        self.master.after(100, self.minimize_to_tray)
+        self.master.after(5000, self.minimize_to_tray)
         # 绑定关闭按钮为最小化到托盘
         self.master.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
+
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.auth_token.set(data.get('ngrok_auth_token', ''))
+            except Exception:
+                pass
+
+    def save_config(self):
+        try:
+            data = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+            
+            data['ngrok_auth_token'] = self.auth_token.get()
+            
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
 
     def _init_tray_icon(self):
         if not pystray:
@@ -103,8 +152,118 @@ class ServerUI:
         self.quit_btn.pack(side=tk.RIGHT, padx=20)
         self.min_btn = tk.Button(btn_frame, text="最小化到托盘", command=self.minimize_to_tray, width=14)
         self.min_btn.pack(side=tk.RIGHT, padx=10)
- 
+        
+        # 远程访问控制区域
+        remote_frame = tk.LabelFrame(master, text="远程访问 (公网穿透)", bg="#f7f7f7", pady=5)
+        remote_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        token_frame = tk.Frame(remote_frame, bg="#f7f7f7")
+        token_frame.pack(fill=tk.X, padx=5)
+        tk.Label(token_frame, text="Ngrok Token:", bg="#f7f7f7").pack(side=tk.LEFT)
+        tk.Entry(token_frame, textvariable=self.auth_token, width=40).pack(side=tk.LEFT, padx=5)
+        tk.Button(token_frame, text="保存配置", command=self.save_config, height=1).pack(side=tk.LEFT)
+        tk.Label(token_frame, text="(可选，不填则使用匿名模式)", fg="gray", bg="#f7f7f7").pack(side=tk.LEFT, padx=5)
+
+        ctrl_frame = tk.Frame(remote_frame, bg="#f7f7f7")
+        ctrl_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.remote_btn = tk.Button(ctrl_frame, text="开启远程访问", command=self.toggle_remote_access, bg="#673AB7", fg="white", width=14)
+        self.remote_btn.pack(side=tk.LEFT)
+        tk.Label(ctrl_frame, text="公网地址:", bg="#f7f7f7").pack(side=tk.LEFT, padx=(10,0))
+        self.url_entry = tk.Entry(ctrl_frame, textvariable=self.remote_url, width=35, state='readonly')
+        self.url_entry.pack(side=tk.LEFT, padx=5)
+        tk.Button(ctrl_frame, text="复制", command=lambda: self.master.clipboard_clear() or self.master.clipboard_append(self.remote_url.get()), height=1).pack(side=tk.LEFT)
+
+        # 二维码区域
+        self.qr_label = tk.Label(remote_frame, bg="#f7f7f7")
+        self.qr_label.pack(pady=5)
+
+    def kill_existing_ngrok(self):
+        """强制关闭所有ngrok进程"""
+        try:
+            # 先尝试使用pyngrok的kill
+            if ngrok:
+                try:
+                    ngrok.kill()
+                except:
+                    pass
+            
+            # 再使用psutil查找并关闭残留进程
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'] and 'ngrok' in proc.info['name'].lower():
+                        self.log(f"[系统] 发现残留ngrok进程 (PID: {proc.info['pid']})，正在清理...", "warn")
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+        except Exception as e:
+            self.log(f"[系统] 清理ngrok进程时出错: {e}", "error")
+
+    def toggle_remote_access(self):
+        if not ngrok:
+            messagebox.showerror("错误", "未安装pyngrok库")
+            return
+
+        if self.remote_tunnel:
+            # 关闭远程访问
+            try:
+                ngrok.disconnect(self.remote_tunnel.public_url)
+            except:
+                pass
+            self.remote_tunnel = None
+            self.remote_url.set("未开启")
+            self.remote_btn.config(text="开启远程访问", bg="#673AB7")
+            self.qr_label.config(image='', text='')
+            self.log("[远程] 远程访问已关闭", "info")
+        else:
+            # 开启远程访问
+            if not self.is_running:
+                messagebox.showwarning("提示", "请先启动本地服务！")
+                return
+                
+            def connect_thread():
+                try:
+                    # 开启前先清理可能存在的僵尸进程
+                    self.kill_existing_ngrok()
+                    time.sleep(1) # 等待进程完全释放
+
+                    # 检查 ngrok 二进制文件是否存在，若不存在提示下载中
+                    if not os.path.exists(conf.get_default().ngrok_path):
+                         self.log("[远程] 未检测到ngrok组件，正在下载中(可能需要几分钟)...", "warn")
+                    
+                    token = self.auth_token.get().strip()
+                    if token:
+                        ngrok.set_auth_token(token)
+                    
+                    # 开启隧道
+                    self.log("[远程] 正在建立隧道连接...", "info")
+                    self.remote_tunnel = ngrok.connect(self.port.get())
+                    public_url = self.remote_tunnel.public_url
+                    self.remote_url.set(public_url)
+                    self.log(f"[远程] 远程访问开启成功: {public_url}", "info")
+                    
+                    # 更新UI
+                    self.master.after(0, lambda: self.remote_btn.config(text="关闭远程访问", bg="#9E9E9E"))
+                    self.master.after(0, lambda: self._show_qr_code(public_url))
+                    
+                except Exception as e:
+                    err = str(e)
+                    self.log(f"[远程] 开启失败: {err}", "error")
+                    # self.master.after(0, lambda: messagebox.showerror("远程访问开启失败", f"无法建立隧道:\n{err}"))
+
+            threading.Thread(target=connect_thread, daemon=True).start()
+
+    def _show_qr_code(self, data):
+        if not qrcode:
+            return
+        qr = qrcode.QRCode(box_size=4, border=2)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        self.qr_image = ImageTk.PhotoImage(img)
+        self.qr_label.config(image=self.qr_image)
+
     def log(self, msg, level="info"):
+        print(f"[{level.upper()}] {msg}")
         # 只保留关键日志，过滤掉频繁的监控和状态日志
         if any(x in msg for x in ["服务启动中", "服务已停止", "Flask服务已启动", "Flask服务关闭异常", "Flask服务启动失败", "检测到汽水音乐已启动", "汽水音乐已退出"]):
             self.log_queue.put((msg, level))
@@ -227,14 +386,49 @@ class ServerUI:
         if self.soda_monitor_thread and self.soda_monitor_thread.is_alive():
             self.soda_monitor_thread.join(timeout=1.0)
 
+    def _save_soda_path_if_needed(self, path):
+        """保存汽水音乐路径到配置文件"""
+        try:
+            current_config = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r') as f:
+                    current_config = json.load(f)
+            
+            saved_path = current_config.get('soda_music_path')
+            # 如果路径不同，或者是新路径，则保存
+            if saved_path != path and os.path.exists(path):
+                current_config['soda_music_path'] = path
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(current_config, f)
+                self.log(f"[配置] 已自动捕获并保存汽水音乐路径: {path}", "info")
+        except Exception as e:
+            pass
+
     def _monitor_soda_music(self):
         """监控汽水音乐运行状态并自动启停服务（资源优化版）"""
         
         last_state = None
         
         while self.soda_monitor_running:
-            # 轻量级检查：通过进程名判断
-            soda_running = any(p.name() == "SodaMusic.exe" for p in psutil.process_iter(['name']))
+            soda_running = False
+            soda_path = None
+            
+            try:
+                for p in psutil.process_iter(['name']):
+                    if p.info['name'] == "SodaMusic.exe":
+                        soda_running = True
+                        # 尝试获取路径
+                        try:
+                            soda_path = p.exe()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
+                        break
+            except Exception:
+                pass
+
+            # 如果检测到路径，尝试保存
+            if soda_path:
+                 self._save_soda_path_if_needed(soda_path)
             
             # 状态变化处理
             if soda_running and last_state != soda_running:
@@ -248,10 +442,20 @@ class ServerUI:
                     self.master.after(0, self.stop_server)
             
             last_state = soda_running
-            time.sleep(10)  # 每10秒检查一次，减少资源占用
+            time.sleep(5)  # 缩短检查间隔到5秒
+
+    def cleanup_resources(self):
+        """清理资源，确保ngrok进程关闭"""
+        if self.remote_tunnel:
+            try:
+                ngrok.kill()
+                print("[INFO] Ngrok进程已清理")
+            except:
+                pass
 
     def quit(self, *args):
         self._stop_soda_monitor()  # 停止监控线程
+        self.cleanup_resources()
         if self.tray_icon:
             try:
                 self.master.after(0, self.tray_icon.stop)

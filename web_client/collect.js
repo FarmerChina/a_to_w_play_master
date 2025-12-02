@@ -1,4 +1,4 @@
-const apiBase = location.origin.replace(/:\d+$/, '') + ':' + (location.port || '5000') + '/api';
+const apiBase = '/api';
 const notification = document.getElementById('notification');
 const playerState = document.getElementById('player-state') || document.getElementById('player-state-mobile');
 const connectionStatus = document.getElementById('connection-status') || document.getElementById('connection-status-mobile');
@@ -85,13 +85,21 @@ function post(url, actionName) {
 }
 
 // 控制按钮状态
-function setButtonState(enabled) {
-    const btns = document.querySelectorAll('.btn-play, .btn-control, .btn-volume');
+function setButtonState(enabled, allowPlay = false) {
+    const btns = document.querySelectorAll('.btn-control, .btn-volume, #collect-btn');
     btns.forEach(btn => {
         btn.disabled = !enabled;
         btn.style.opacity = enabled ? 1 : 0.5;
         btn.style.cursor = enabled ? '' : 'not-allowed';
     });
+
+    const playBtn = document.querySelector('.btn-play');
+    if (playBtn) {
+        const playEnabled = enabled || allowPlay;
+        playBtn.disabled = !playEnabled;
+        playBtn.style.opacity = playEnabled ? 1 : 0.5;
+        playBtn.style.cursor = playEnabled ? '' : 'not-allowed';
+    }
 }
 
 
@@ -113,16 +121,20 @@ function checkAndUpdateState() {
             if (r.status === 200) {
                 isConnected = true;
                 updateConnectionUI(true);
+                setButtonState(true);
             } else {
                 isConnected = false;
                 updateConnectionUI(false);
+                // 状态码非200（如503），说明连接上了服务器但检测不到汽水音乐
+                // 此时允许点击播放按钮以尝试自动启动
+                setButtonState(false, true);
             }
-            setButtonState(isConnected);
         })
         .catch((e) => { 
             isConnected = false;
             updateConnectionUI(false);
-            setButtonState(false);
+            // 网络错误，完全无法连接
+            setButtonState(false, false);
         });
 }
 
@@ -160,11 +172,20 @@ function collect() {
 
 // 控制器函数（增加连接判断）
 function playPause() {
-    if (!isConnected) {
-        showNotification('未连接到服务，无法操作', false);
-        showMsg('请先启动服务', false);
-        return;
-    }
+    // 播放/暂停是特例，如果未连接（即汽水音乐未启动），我们仍允许点击以触发自动启动
+    // 后端会自动启动汽水音乐
+    // 但如果连后端服务都连不上（status检查失败），那还是不能点
+    // 这里的isConnected是基于 /status 接口返回的 200 OK (表示检测到进程) 
+    // 还是仅仅表示能连上后端？
+    // 看 status() 实现： only returns 200 if process exists.
+    // 所以 isConnected 为 false 时，也可能是后端活着但汽水音乐没活。
+    // 我们应该允许 playPause 即使 isConnected 为 false (只要是 503 而不是网络错误)
+    
+    // Wait, if /status returns 503, isConnected is set to false.
+    // If I block playPause when !isConnected, I block the auto-start feature!
+    // I need to change this logic.
+    
+    // Let's relax the check for playPause.
     post('/play', '播放/暂停');
 }
 
@@ -202,4 +223,32 @@ function volDown() {
         return;
     }
     post('/volume/down', '音量-');
+}
+
+function sendCmd() {
+    // 同样允许发送CMD即使汽水音乐没启动，只要后端服务在
+    const input = document.getElementById('cmd-input');
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    
+    fetch(apiBase + '/cmd', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cmd: cmd})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if(res.status === 'ok') {
+            showNotification('指令已发送');
+            showMsg('指令已执行');
+            if (res.stdout) console.log(res.stdout);
+        } else {
+            showNotification('指令失败', false);
+            showMsg('错误: ' + (res.message || '未知错误'), false);
+        }
+    })
+    .catch(e => {
+        showNotification('请求失败', false);
+        console.error(e);
+    });
 }

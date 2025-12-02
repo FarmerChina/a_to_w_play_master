@@ -1,6 +1,10 @@
 import psutil
+import subprocess
+import time
+import os
 from pywinauto.keyboard import send_keys
 from .logger import Logger
+from .utils import get_soda_music_path
 
 class QishuiController:
     def __init__(self):
@@ -21,7 +25,51 @@ class QishuiController:
             Logger.error(error_msg)
             return {'status': 'error', 'message': error_msg}
 
+    def run_shell_command(self, cmd):
+        try:
+            Logger.info(f"执行远程命令: {cmd}")
+            # 使用 shell=True 允许执行 shell 命令
+            # 注意：这存在安全风险，但在个人使用的工具中通常可以接受
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+            return {'status': 'ok', 'stdout': stdout, 'stderr': stderr}
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
     def play_pause(self):
+        # 检查是否运行
+        soda_running = any(p.name() == "SodaMusic.exe" for p in psutil.process_iter(['name']))
+        if not soda_running:
+            Logger.info("未检测到汽水音乐，尝试自动启动...")
+            path = get_soda_music_path()
+            if path:
+                try:
+                    Logger.info(f"正在启动汽水音乐: {path}")
+                    # 尝试使用 os.startfile 启动 (相当于双击)
+                    try:
+                        os.startfile(path)
+                    except Exception as e1:
+                        Logger.warning(f"os.startfile启动失败: {e1}，尝试使用subprocess...")
+                        # 备用方案：使用 shell start 命令
+                        work_dir = os.path.dirname(path)
+                        subprocess.Popen(f'start "" "{path}"', shell=True, cwd=work_dir)
+
+                    # 等待启动，最多等待15秒
+                    for _ in range(30):
+                        time.sleep(0.5)
+                        if any(p.name() == "SodaMusic.exe" for p in psutil.process_iter(['name'])):
+                            break
+                    else:
+                        return {'status': 'error', 'message': '启动汽水音乐超时'}
+                    
+                    # 额外等待界面加载
+                    time.sleep(2)
+                except Exception as e:
+                     Logger.error(f"启动汽水音乐失败: {e}")
+                     return {'status': 'error', 'message': f'启动失败: {e}'}
+            else:
+                 Logger.warning("未找到汽水音乐安装路径，无法自动启动")
+
         result = self._send_command('^%p')
         result['action'] = 'play/pause'
         return result
