@@ -33,7 +33,7 @@ class ServerUI:
     def __init__(self, master):
         self.master = master
         master.title("汽水音乐控制台")
-        master.geometry("700x650") # 增加高度以容纳新功能
+        master.geometry("700x750") # 增加高度以容纳新功能
         master.configure(bg="#f7f7f7")
         self.is_running = False
         self.server_thread = None
@@ -191,8 +191,37 @@ class ServerUI:
         tk.Button(mail_frame, text="保存", command=self.save_config, height=1).pack(side=tk.LEFT, padx=5)
 
         # 二维码区域
-        self.qr_label = tk.Label(remote_frame, bg="#f7f7f7")
+        self.qr_frame = tk.Frame(remote_frame, bg="#f7f7f7")
+        self.qr_frame.pack(pady=5, fill=tk.BOTH, expand=True)
+        
+        self.qr_label = tk.Label(self.qr_frame, bg="#f7f7f7")
         self.qr_label.pack(pady=5)
+        
+        # 加载动画标签 (初始隐藏)
+        self.loading_label = tk.Label(self.qr_frame, text="正在启动远程服务...", bg="#f7f7f7", fg="#2196F3", font=("微软雅黑", 10))
+        self.loading_spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.loading_idx = 0
+        self.is_loading = False
+
+    def _start_loading_animation(self, text="正在启动..."):
+        self.is_loading = True
+        self.qr_label.pack_forget() # 隐藏二维码
+        self.loading_label.config(text=text)
+        self.loading_label.pack(pady=20)
+        self._animate_loading()
+
+    def _stop_loading_animation(self):
+        self.is_loading = False
+        self.loading_label.pack_forget()
+        self.qr_label.pack(pady=5) # 恢复二维码显示位置
+
+    def _animate_loading(self):
+        if self.is_loading:
+            char = self.loading_spinner_chars[self.loading_idx % len(self.loading_spinner_chars)]
+            current_text = self.loading_label.cget("text").split(' ')[-1] # 获取除图标外的文本
+            self.loading_label.config(text=f"{char} {current_text}")
+            self.loading_idx += 1
+            self.master.after(100, self._animate_loading)
 
     def cleanup_tunnels(self):
         """清理残留的隧道进程"""
@@ -229,11 +258,18 @@ class ServerUI:
                 try:
                     # 开启前先清理
                     self.cleanup_tunnels()
+                    
+                    # 显示加载动画
+                    self.master.after(0, lambda: self._start_loading_animation("正在启动 Cloudflare Tunnel (首次运行可能需要下载)..."))
+                    
                     time.sleep(1)
 
                     self.log("[远程] 正在启动 Cloudflare Tunnel...", "info")
                     
                     url = self.cloudflared.start(self.port.get())
+                    
+                    # 停止加载动画
+                    self.master.after(0, self._stop_loading_animation)
                     
                     if url:
                         self.remote_tunnel = True # Just a flag now
@@ -263,16 +299,22 @@ class ServerUI:
                                         self.log(f"[邮件] 保存二维码失败: {e}", "warn")
                                 
                                 mailer = Mailer(self.smtp_server, self.smtp_port, self.sender_email, self.sender_password)
-                                mailer.send_link_notification(self.recv_email.get(), url, qr_path)
-
+                                success = mailer.send_link_notification(self.recv_email.get(), url, qr_path)
+                                if success:
+                                    self.log(f"[邮件] 邮件发送成功", "info")
+                                else:
+                                    self.log(f"[邮件] 邮件发送失败，请检查配置", "error")
+ 
                         threading.Thread(target=send_mail_after_qr, daemon=True).start()
                             
                     else:
                         self.log("[远程] 开启失败: 无法获取URL", "error")
+                        self.master.after(0, self._stop_loading_animation)
                     
                 except Exception as e:
                     err = str(e)
                     self.log(f"[远程] 开启失败: {err}", "error")
+                    self.master.after(0, self._stop_loading_animation)
 
             threading.Thread(target=connect_thread, daemon=True).start()
 
@@ -290,7 +332,7 @@ class ServerUI:
     def log(self, msg, level="info"):
         print(f"[{level.upper()}] {msg}")
         # 只保留关键日志，过滤掉频繁的监控和状态日志
-        if any(x in msg for x in ["服务启动中", "服务已停止", "Flask服务已启动", "Flask服务关闭异常", "Flask服务启动失败", "检测到汽水音乐已启动", "汽水音乐已退出"]):
+        if any(x in msg for x in ["服务启动中", "服务已停止", "Flask服务已启动", "Flask服务关闭异常", "Flask服务启动失败", "检测到汽水音乐已启动", "汽水音乐已退出", "邮件发送成功", "邮件发送失败"]):
             self.log_queue.put((msg, level))
         # 其它日志不再写入，防止内存溢出
 
