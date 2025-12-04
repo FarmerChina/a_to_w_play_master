@@ -79,7 +79,8 @@ dist/                          # Windows 端打包exe目录
    ```
 2. **生成无控制台的可执行文件**
    ```powershell
-   pyinstaller --noconsole --onefile -n AtoWMusicServer server.py --add-data "web_client;web_client"
+   Remove-Item -Path dist\AtoWMusicServer.exe -Force; pyinstaller AtoWMusicServer.spec
+   <!-- pyinstaller --noconsole --onefile -n AtoWMusicServer server.py --add-data "web_client;web_client" -->
    ```
 3. **（可选）用 Inno Setup/NSIS 制作安装包，自动创建桌面和开始菜单快捷方式**
    - 推荐使用 Inno Setup，见下方“安装包制作”说明

@@ -16,15 +16,15 @@ try:
     import pystray
     from PIL import Image, ImageDraw, ImageTk
     import qrcode
-    from pyngrok import ngrok, conf
 except ImportError:
     pystray = None
     qrcode = None
-    ngrok = None
 
 from music_server.web import app
 from music_server.utils import get_local_ip
 from music_server.logger import Logger
+from music_server.cloudflared import Cloudflared
+from music_server.mailer import Mailer
 
 LOCAL_IP = get_local_ip()
 CONFIG_FILE = "config.json"
@@ -45,10 +45,20 @@ class ServerUI:
         
         # 远程访问相关变量
         self.remote_tunnel = None
-        # 默认值：用户提供的token
-        self.auth_token = tk.StringVar(value="36HmCWxHQs2WkA28If7SJsk1Xxx_6w2ud5darLSo9b5nCdiBf")
+        self.cloudflared = Cloudflared()
         self.remote_url = tk.StringVar(value="未开启")
         self.qr_image = None
+        self.qr_image_data = None # 新增：用于存储二维码PIL对象
+        
+        # 邮件通知相关
+        self.email_notify_enabled = tk.BooleanVar(value=True)
+        self.recv_email = tk.StringVar(value="ngt@huinong.co")
+        # 发送配置 (使用腾讯企业邮箱)
+        self.smtp_server = "smtp.exmail.qq.com"
+        self.smtp_port = 465
+        self.sender_email = "ngt@huinong.co"
+        self.sender_password = "MiNR6qWE83AFWn3K"
+        
         self.load_config()
         
         # 注册退出清理函数
@@ -75,7 +85,9 @@ class ServerUI:
             try:
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
-                    self.auth_token.set(data.get('ngrok_auth_token', ''))
+                    # 读取邮件配置
+                    self.email_notify_enabled.set(data.get('email_notify_enabled', True))
+                    self.recv_email.set(data.get('recv_email', 'ngt@huinong.co'))
             except Exception:
                 pass
 
@@ -86,7 +98,8 @@ class ServerUI:
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
             
-            data['ngrok_auth_token'] = self.auth_token.get()
+            data['email_notify_enabled'] = self.email_notify_enabled.get()
+            data['recv_email'] = self.recv_email.get()
             
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(data, f)
@@ -158,13 +171,8 @@ class ServerUI:
         remote_frame = tk.LabelFrame(master, text="远程访问 (公网穿透)", bg="#f7f7f7", pady=5)
         remote_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        token_frame = tk.Frame(remote_frame, bg="#f7f7f7")
-        token_frame.pack(fill=tk.X, padx=5)
-        tk.Label(token_frame, text="Ngrok Token:", bg="#f7f7f7").pack(side=tk.LEFT)
-        tk.Entry(token_frame, textvariable=self.auth_token, width=40).pack(side=tk.LEFT, padx=5)
-        tk.Button(token_frame, text="保存配置", command=self.save_config, height=1).pack(side=tk.LEFT)
-        tk.Label(token_frame, text="(可选，不填则使用匿名模式)", fg="gray", bg="#f7f7f7").pack(side=tk.LEFT, padx=5)
-
+        # 移除了 Ngrok Token 配置区域，改用 Cloudflare Tunnel (无需配置)
+        
         ctrl_frame = tk.Frame(remote_frame, bg="#f7f7f7")
         ctrl_frame.pack(fill=tk.X, padx=5, pady=5)
         self.remote_btn = tk.Button(ctrl_frame, text="开启远程访问", command=self.toggle_remote_access, bg="#673AB7", fg="white", width=14)
@@ -174,42 +182,38 @@ class ServerUI:
         self.url_entry.pack(side=tk.LEFT, padx=5)
         tk.Button(ctrl_frame, text="复制", command=lambda: self.master.clipboard_clear() or self.master.clipboard_append(self.remote_url.get()), height=1).pack(side=tk.LEFT)
 
+        # 邮件通知配置
+        mail_frame = tk.Frame(remote_frame, bg="#f7f7f7")
+        mail_frame.pack(fill=tk.X, padx=5, pady=2)
+        tk.Checkbutton(mail_frame, text="启用邮件通知", variable=self.email_notify_enabled, bg="#f7f7f7", command=self.save_config).pack(side=tk.LEFT)
+        tk.Label(mail_frame, text="接收邮箱(逗号分隔):", bg="#f7f7f7").pack(side=tk.LEFT, padx=(10,5))
+        tk.Entry(mail_frame, textvariable=self.recv_email, width=40).pack(side=tk.LEFT)
+        tk.Button(mail_frame, text="保存", command=self.save_config, height=1).pack(side=tk.LEFT, padx=5)
+
         # 二维码区域
         self.qr_label = tk.Label(remote_frame, bg="#f7f7f7")
         self.qr_label.pack(pady=5)
 
-    def kill_existing_ngrok(self):
-        """强制关闭所有ngrok进程"""
-        try:
-            # 先尝试使用pyngrok的kill
-            if ngrok:
-                try:
-                    ngrok.kill()
-                except:
-                    pass
+    def cleanup_tunnels(self):
+        """清理残留的隧道进程"""
+        if self.cloudflared:
+            self.cloudflared.stop()
             
-            # 再使用psutil查找并关闭残留进程
+        # 尝试清理残留的 cloudflared 进程
+        try:
             for proc in psutil.process_iter(['pid', 'name']):
-                try:
-                    if proc.info['name'] and 'ngrok' in proc.info['name'].lower():
-                        self.log(f"[系统] 发现残留ngrok进程 (PID: {proc.info['pid']})，正在清理...", "warn")
-                        proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    pass
-        except Exception as e:
-            self.log(f"[系统] 清理ngrok进程时出错: {e}", "error")
+                if proc.info['name'] and 'cloudflared' in proc.info['name'].lower():
+                     self.log(f"[系统] 发现残留隧道进程 (PID: {proc.info['pid']})，正在清理...", "warn")
+                     proc.kill()
+        except Exception:
+            pass
 
     def toggle_remote_access(self):
-        if not ngrok:
-            messagebox.showerror("错误", "未安装pyngrok库")
-            return
-
         if self.remote_tunnel:
             # 关闭远程访问
-            try:
-                ngrok.disconnect(self.remote_tunnel.public_url)
-            except:
-                pass
+            if self.cloudflared:
+                self.cloudflared.stop()
+            
             self.remote_tunnel = None
             self.remote_url.set("未开启")
             self.remote_btn.config(text="开启远程访问", bg="#673AB7")
@@ -223,44 +227,52 @@ class ServerUI:
                 
             def connect_thread():
                 try:
-                    # 开启前先清理可能存在的僵尸进程
-                    self.kill_existing_ngrok()
-                    time.sleep(1) # 等待进程完全释放
+                    # 开启前先清理
+                    self.cleanup_tunnels()
+                    time.sleep(1)
 
-                    # 检查 ngrok 二进制文件是否存在，若不存在提示下载中
-                    if not os.path.exists(conf.get_default().ngrok_path):
-                         self.log("[远程] 未检测到ngrok组件，正在下载中(可能需要几分钟)...", "warn")
+                    self.log("[远程] 正在启动 Cloudflare Tunnel...", "info")
                     
-                    token = self.auth_token.get().strip()
-                    if token:
-                        ngrok.set_auth_token(token)
+                    url = self.cloudflared.start(self.port.get())
                     
-                    # 开启隧道
-                    self.log("[远程] 正在建立隧道连接...", "info")
-                    
-                    # Windows下隐藏ngrok窗口
-                    if os.name == 'nt':
-                        try:
-                            startupinfo = subprocess.STARTUPINFO()
-                            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                            startupinfo.wShowWindow = subprocess.SW_HIDE
-                            conf.get_default().startupinfo = startupinfo
-                        except Exception:
-                            pass
+                    if url:
+                        self.remote_tunnel = True # Just a flag now
+                        self.remote_url.set(url)
+                        self.log(f"[远程] 远程访问开启成功: {url}", "info")
+                        
+                        # 更新UI
+                        self.master.after(0, lambda: self.remote_btn.config(text="关闭远程访问", bg="#9E9E9E"))
+                        self.master.after(0, lambda: self._show_qr_code(url))
+                        
+                        # 确保二维码生成后再发送邮件
+                        def send_mail_after_qr():
+                            # 等待一小会儿确保 self.qr_image_data 已生成
+                            time.sleep(0.5) 
+                            if self.email_notify_enabled.get() and self.recv_email.get():
+                                self.log(f"[邮件] 正在发送新地址到 {self.recv_email.get()}...", "info")
+                                
+                                # 临时保存二维码图片以便发送
+                                qr_path = None
+                                if self.qr_image_data:
+                                    try:
+                                        import tempfile
+                                        temp_dir = tempfile.gettempdir()
+                                        qr_path = os.path.join(temp_dir, 'atow_qrcode.png')
+                                        self.qr_image_data.save(qr_path)
+                                    except Exception as e:
+                                        self.log(f"[邮件] 保存二维码失败: {e}", "warn")
+                                
+                                mailer = Mailer(self.smtp_server, self.smtp_port, self.sender_email, self.sender_password)
+                                mailer.send_link_notification(self.recv_email.get(), url, qr_path)
 
-                    self.remote_tunnel = ngrok.connect(self.port.get())
-                    public_url = self.remote_tunnel.public_url
-                    self.remote_url.set(public_url)
-                    self.log(f"[远程] 远程访问开启成功: {public_url}", "info")
-                    
-                    # 更新UI
-                    self.master.after(0, lambda: self.remote_btn.config(text="关闭远程访问", bg="#9E9E9E"))
-                    self.master.after(0, lambda: self._show_qr_code(public_url))
+                        threading.Thread(target=send_mail_after_qr, daemon=True).start()
+                            
+                    else:
+                        self.log("[远程] 开启失败: 无法获取URL", "error")
                     
                 except Exception as e:
                     err = str(e)
                     self.log(f"[远程] 开启失败: {err}", "error")
-                    # self.master.after(0, lambda: messagebox.showerror("远程访问开启失败", f"无法建立隧道:\n{err}"))
 
             threading.Thread(target=connect_thread, daemon=True).start()
 
@@ -271,6 +283,7 @@ class ServerUI:
         qr.add_data(data)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
+        self.qr_image_data = img # 保存原始PIL图像对象用于邮件发送
         self.qr_image = ImageTk.PhotoImage(img)
         self.qr_label.config(image=self.qr_image)
 
@@ -417,7 +430,9 @@ class ServerUI:
             pass
 
     def _monitor_soda_music(self):
-        """监控汽水音乐运行状态并自动启停服务（资源优化版）"""
+        """监控汽水音乐运行状态并自动启动服务（资源优化版）
+           注意：汽水音乐退出时不再自动停止服务，以保持服务在线
+        """
         
         last_state = None
         
@@ -450,20 +465,23 @@ class ServerUI:
             
             if not soda_running and last_state != soda_running:
                 if self.is_running:
-                    self.log("[监控] 汽水音乐已退出，正在自动停止服务...", "info")
-                    self.master.after(0, self.stop_server)
+                    self.log("[监控] 汽水音乐已退出，服务保持运行等待唤醒...", "info")
+                    # self.master.after(0, self.stop_server) # 取消自动停止
             
             last_state = soda_running
             time.sleep(5)  # 缩短检查间隔到5秒
 
     def cleanup_resources(self):
-        """清理资源，确保ngrok进程关闭"""
-        if self.remote_tunnel:
+        """清理资源，确保隧道进程关闭"""
+        if self.cloudflared:
             try:
-                ngrok.kill()
-                print("[INFO] Ngrok进程已清理")
+                self.cloudflared.stop()
+                print("[INFO] Cloudflared进程已清理")
             except:
                 pass
+        if self.remote_tunnel:
+             # Reset flag
+             self.remote_tunnel = None
 
     def quit(self, *args):
         self._stop_soda_monitor()  # 停止监控线程
