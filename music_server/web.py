@@ -8,6 +8,17 @@ import psutil
 app = Flask(__name__, static_folder=get_static_folder(sys, __file__), static_url_path='')
 qishui = QishuiController()
 
+@app.after_request
+def log_request_info(response):
+    if response.status_code == 404:
+        Logger.warning(f"404 Not Found: {request.method} {request.url}")
+    return response
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """健康检查接口"""
+    return jsonify({'status': 'ok', 'timestamp': psutil.time.time()}), 200
+
 @app.route('/api/play', methods=['POST'])
 def play():
     Logger.info("接收到播放/暂停命令")

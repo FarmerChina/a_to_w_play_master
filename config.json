@@ -1,6 +1,1 @@
-{
-    "ngrok_auth_token": "36HmCWxHQs2WkA28If7SJsk1Xxx_6w2ud5darLSo9b5nCdiBf",
-    "soda_music_path": "C:\\Users\\ningguotong\\AppData\\Local\\Programs\\Soda Music\\2.8.9\\SodaMusic.exe",
-    "email_notify_enabled": true,
-    "recv_email": "ngt@huinong.co"
-}
+{"ngrok_auth_token": "36HmCWxHQs2WkA28If7SJsk1Xxx_6w2ud5darLSo9b5nCdiBf", "soda_music_path": "C:\\Users\\ningguotong\\AppData\\Local\\Programs\\Soda Music\\2.8.9\\SodaMusic.exe", "email_notify_enabled": true, "recv_email": "ngt@huinong.co,1142115009@qq.com"}

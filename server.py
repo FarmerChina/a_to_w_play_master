@@ -5,6 +5,8 @@ import threading
 import subprocess
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
 import webbrowser
 import time
 import queue
@@ -12,6 +14,7 @@ import platform
 import psutil
 import json
 import atexit
+import winreg
 try:
     import pystray
     from PIL import Image, ImageDraw, ImageTk
@@ -33,8 +36,11 @@ class ServerUI:
     def __init__(self, master):
         self.master = master
         master.title("汽水音乐控制台")
-        master.geometry("700x750") # 增加高度以容纳新功能
-        master.configure(bg="#f7f7f7")
+        master.geometry("750x800")
+        
+        # 应用扁平化主题
+        self.style = ttk.Style("cosmo")
+        
         self.is_running = False
         self.server_thread = None
         self.log_queue = Logger.get_queue()
@@ -42,6 +48,12 @@ class ServerUI:
         self.tray_icon = None
         self.soda_monitor_thread = None
         self.soda_monitor_running = False
+        self.health_check_thread = None
+        self.health_check_running = False
+        self.restart_attempt_count = 0
+        
+        # 开机自启状态
+        self.autostart_enabled = tk.BooleanVar(value=False)
         
         # 远程访问相关变量
         self.remote_tunnel = None
@@ -60,6 +72,7 @@ class ServerUI:
         self.sender_password = "MiNR6qWE83AFWn3K"
         
         self.load_config()
+        self._check_autostart_status()
         
         # 注册退出清理函数
         atexit.register(self.cleanup_resources)
@@ -106,6 +119,44 @@ class ServerUI:
         except Exception:
             pass
 
+    def _check_autostart_status(self):
+        """检查注册表中是否已开启开机自启"""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            try:
+                winreg.QueryValueEx(key, "AtoWMusicServer")
+                self.autostart_enabled.set(True)
+            except FileNotFoundError:
+                self.autostart_enabled.set(False)
+            finally:
+                winreg.CloseKey(key)
+        except Exception as e:
+            self.log(f"[系统] 检查自启状态失败: {e}", "warn")
+
+    def _toggle_autostart(self):
+        """切换开机自启状态"""
+        exe_path = os.path.abspath(sys.argv[0])
+        app_name = "AtoWMusicServer"
+        
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_ALL_ACCESS)
+            if self.autostart_enabled.get():
+                # 开启自启
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+                self.log("[系统] 已开启开机自启动", "info")
+            else:
+                # 关闭自启
+                try:
+                    winreg.DeleteValue(key, app_name)
+                    self.log("[系统] 已关闭开机自启动", "info")
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+        except Exception as e:
+            self.log(f"[系统] 设置自启动失败: {e}", "error")
+            # 回滚UI状态
+            self.autostart_enabled.set(not self.autostart_enabled.get())
+
     def _init_tray_icon(self):
         if not pystray:
             return
@@ -141,64 +192,91 @@ class ServerUI:
         self.master.focus_force()
 
     def _build_ui(self, master):
-        top_frame = tk.Frame(master, bg="#f7f7f7")
-        top_frame.pack(fill=tk.X, pady=5)
-        tk.Label(top_frame, text="服务状态:", bg="#f7f7f7").pack(side=tk.LEFT, padx=(10,0))
-        self.status_label = tk.Label(top_frame, text="未启动", fg="red", bg="#f7f7f7", font=("微软雅黑", 11, "bold"))
-        self.status_label.pack(side=tk.LEFT, padx=5)
-        tk.Label(top_frame, text="端口:", bg="#f7f7f7").pack(side=tk.LEFT, padx=(30,0))
-        self.port_entry = tk.Entry(top_frame, textvariable=self.port, width=6, font=("Consolas", 11))
-        self.port_entry.pack(side=tk.LEFT)
-        self.open_btn = tk.Button(top_frame, text="打开Web控制台", command=self.open_browser, bg="#2196F3", fg="white")
-        self.open_btn.pack(side=tk.RIGHT, padx=10)
-        self.open_btn.config(state=tk.DISABLED)
-
-        self.log_area = scrolledtext.ScrolledText(master, state='disabled', height=20, font=("Consolas", 10))
-        self.log_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        btn_frame = tk.Frame(master, bg="#f7f7f7")
-        btn_frame.pack(fill=tk.X, pady=8)
-        self.start_btn = tk.Button(btn_frame, text="启动服务", command=self.start_server, bg="#4CAF50", fg="white", width=12, font=("微软雅黑", 11, "bold"))
-        self.start_btn.pack(side=tk.LEFT, padx=20)
-        self.stop_btn = tk.Button(btn_frame, text="停止服务", command=self.stop_server, state=tk.DISABLED, bg="#F44336", fg="white", width=12, font=("微软雅黑", 11, "bold"))
-        self.stop_btn.pack(side=tk.LEFT, padx=20)
-        self.quit_btn = tk.Button(btn_frame, text="退出", command=self.quit, width=8)
-        self.quit_btn.pack(side=tk.RIGHT, padx=20)
-        self.min_btn = tk.Button(btn_frame, text="最小化到托盘", command=self.minimize_to_tray, width=14)
-        self.min_btn.pack(side=tk.RIGHT, padx=10)
+        # 主容器
+        main_container = ttk.Frame(master, padding=20)
+        main_container.pack(fill=BOTH, expand=YES)
         
-        # 远程访问控制区域
-        remote_frame = tk.LabelFrame(master, text="远程访问 (公网穿透)", bg="#f7f7f7", pady=5)
-        remote_frame.pack(fill=tk.X, padx=10, pady=5)
+        # 1. 顶部状态栏
+        status_frame = ttk.Labelframe(main_container, text="服务状态", padding=15, bootstyle="info")
+        status_frame.pack(fill=X, pady=(0, 15))
         
-        # 移除了 Ngrok Token 配置区域，改用 Cloudflare Tunnel (无需配置)
+        # 状态指示灯和文本
+        status_inner = ttk.Frame(status_frame)
+        status_inner.pack(fill=X)
         
-        ctrl_frame = tk.Frame(remote_frame, bg="#f7f7f7")
-        ctrl_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.remote_btn = tk.Button(ctrl_frame, text="开启远程访问", command=self.toggle_remote_access, bg="#673AB7", fg="white", width=14)
-        self.remote_btn.pack(side=tk.LEFT)
-        tk.Label(ctrl_frame, text="公网地址:", bg="#f7f7f7").pack(side=tk.LEFT, padx=(10,0))
-        self.url_entry = tk.Entry(ctrl_frame, textvariable=self.remote_url, width=35, state='readonly')
-        self.url_entry.pack(side=tk.LEFT, padx=5)
-        tk.Button(ctrl_frame, text="复制", command=lambda: self.master.clipboard_clear() or self.master.clipboard_append(self.remote_url.get()), height=1).pack(side=tk.LEFT)
+        self.status_label = ttk.Label(status_inner, text="● 未启动", font=("微软雅黑", 12, "bold"), bootstyle="danger")
+        self.status_label.pack(side=LEFT, padx=(5, 20))
+        
+        # 端口输入
+        ttk.Label(status_inner, text="端口:").pack(side=LEFT)
+        self.port_entry = ttk.Entry(status_inner, textvariable=self.port, width=8, font=("Consolas", 10))
+        self.port_entry.pack(side=LEFT, padx=5)
+        
+        # 打开浏览器按钮
+        self.open_btn = ttk.Button(status_inner, text="打开 Web 控制台", command=self.open_browser, bootstyle="outline-primary", state=DISABLED)
+        self.open_btn.pack(side=RIGHT)
 
-        # 邮件通知配置
-        mail_frame = tk.Frame(remote_frame, bg="#f7f7f7")
-        mail_frame.pack(fill=tk.X, padx=5, pady=2)
-        tk.Checkbutton(mail_frame, text="启用邮件通知", variable=self.email_notify_enabled, bg="#f7f7f7", command=self.save_config).pack(side=tk.LEFT)
-        tk.Label(mail_frame, text="接收邮箱(逗号分隔):", bg="#f7f7f7").pack(side=tk.LEFT, padx=(10,5))
-        tk.Entry(mail_frame, textvariable=self.recv_email, width=40).pack(side=tk.LEFT)
-        tk.Button(mail_frame, text="保存", command=self.save_config, height=1).pack(side=tk.LEFT, padx=5)
-
-        # 二维码区域
-        self.qr_frame = tk.Frame(remote_frame, bg="#f7f7f7")
-        self.qr_frame.pack(pady=5, fill=tk.BOTH, expand=True)
+        # 2. 控制按钮区域
+        btn_frame = ttk.Frame(main_container)
+        btn_frame.pack(fill=X, pady=(0, 15))
         
-        self.qr_label = tk.Label(self.qr_frame, bg="#f7f7f7")
+        self.start_btn = ttk.Button(btn_frame, text="启动服务", command=self.start_server, bootstyle="success", width=15)
+        self.start_btn.pack(side=LEFT, padx=(0, 10))
+        
+        self.stop_btn = ttk.Button(btn_frame, text="停止服务", command=self.stop_server, state=DISABLED, bootstyle="danger", width=15)
+        self.stop_btn.pack(side=LEFT, padx=(0, 10))
+        
+        # 开机自启开关
+        self.autostart_chk = ttk.Checkbutton(btn_frame, text="开机自启", variable=self.autostart_enabled, command=self._toggle_autostart, bootstyle="round-toggle")
+        self.autostart_chk.pack(side=LEFT, padx=20)
+
+        self.min_btn = ttk.Button(btn_frame, text="最小化", command=self.minimize_to_tray, bootstyle="secondary-outline", width=10)
+        self.min_btn.pack(side=RIGHT, padx=(10, 0))
+        
+        self.quit_btn = ttk.Button(btn_frame, text="退出", command=self.quit, bootstyle="secondary-outline", width=10)
+        self.quit_btn.pack(side=RIGHT)
+
+        # 3. 日志区域
+        log_frame = ttk.Labelframe(main_container, text="运行日志", padding=10)
+        log_frame.pack(fill=BOTH, expand=YES, pady=(0, 15))
+        
+        self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, font=("Consolas", 9), relief="flat")
+        self.log_area.pack(fill=BOTH, expand=YES)
+        
+        # 4. 远程访问与高级功能
+        remote_frame = ttk.Labelframe(main_container, text="远程访问 & 通知", padding=15, bootstyle="primary")
+        remote_frame.pack(fill=X)
+        
+        # 远程开关行
+        remote_ctrl_row = ttk.Frame(remote_frame)
+        remote_ctrl_row.pack(fill=X, pady=(0, 10))
+        
+        self.remote_btn = ttk.Button(remote_ctrl_row, text="开启远程访问", command=self.toggle_remote_access, bootstyle="info", width=15)
+        self.remote_btn.pack(side=LEFT, padx=(0, 10))
+        
+        ttk.Label(remote_ctrl_row, text="公网地址:").pack(side=LEFT)
+        self.url_entry = ttk.Entry(remote_ctrl_row, textvariable=self.remote_url, state='readonly')
+        self.url_entry.pack(side=LEFT, fill=X, expand=YES, padx=5)
+        
+        ttk.Button(remote_ctrl_row, text="复制", command=lambda: self.master.clipboard_clear() or self.master.clipboard_append(self.remote_url.get()), bootstyle="outline-secondary").pack(side=LEFT)
+        
+        # 邮件设置行
+        mail_row = ttk.Frame(remote_frame)
+        mail_row.pack(fill=X, pady=(0, 10))
+        
+        ttk.Checkbutton(mail_row, text="启用邮件通知", variable=self.email_notify_enabled, command=self.save_config, bootstyle="square-toggle").pack(side=LEFT, padx=(0, 10))
+        ttk.Label(mail_row, text="接收邮箱:").pack(side=LEFT)
+        ttk.Entry(mail_row, textvariable=self.recv_email, width=30).pack(side=LEFT, padx=5)
+        ttk.Button(mail_row, text="保存配置", command=self.save_config, bootstyle="outline-success", width=10).pack(side=LEFT)
+
+        # 二维码显示区
+        self.qr_frame = ttk.Frame(remote_frame)
+        self.qr_frame.pack(fill=BOTH, expand=YES)
+        
+        self.qr_label = ttk.Label(self.qr_frame)
         self.qr_label.pack(pady=5)
         
-        # 加载动画标签 (初始隐藏)
-        self.loading_label = tk.Label(self.qr_frame, text="正在启动远程服务...", bg="#f7f7f7", fg="#2196F3", font=("微软雅黑", 10))
+        self.loading_label = ttk.Label(self.qr_frame, text="正在启动远程服务...", font=("微软雅黑", 10), bootstyle="info")
         self.loading_spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         self.loading_idx = 0
         self.is_loading = False
@@ -360,6 +438,122 @@ class ServerUI:
             pass
         self.master.after(200, self._poll_log)
 
+    def is_port_in_use(self, port):
+        """
+        检查端口是否被其他进程占用。
+        如果端口被当前进程占用，则视为未被占用。
+        """
+        import socket
+        
+        # 1. 尝试绑定端口，如果成功则说明未被占用
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('0.0.0.0', port))
+                return False # 绑定成功，说明端口空闲
+            except OSError:
+                pass # 绑定失败，说明端口可能被占用
+
+        # 2. 如果绑定失败，进一步检查是否是当前进程占用的
+        try:
+            current_pid = os.getpid()
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    for conn in proc.connections():
+                        if conn.laddr.port == port:
+                            if proc.info['pid'] == current_pid:
+                                return False # 是当前进程占用的，视为未被占用
+                            else:
+                                return True # 是其他进程占用的
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
+            pass
+            
+        return True # 默认视为被占用
+
+    def _on_server_started(self, port):
+        self.is_running = True
+        self.status_label.config(text=f"● 运行中 (http://{LOCAL_IP}:{port})", bootstyle="success")
+        self.start_btn.config(state=DISABLED)
+        self.stop_btn.config(state=NORMAL)
+        self.open_btn.config(state=NORMAL)
+        self.restart_attempt_count = 0 # 重置重启计数
+        
+        # 启动健康检查
+        if not self.health_check_running:
+            self.health_check_running = True
+            self.health_check_thread = threading.Thread(target=self._monitor_service_health, daemon=True)
+            self.health_check_thread.start()
+
+    def _monitor_service_health(self):
+        """服务健康检查线程"""
+        import urllib.request
+        failure_count = 0
+        
+        while self.health_check_running:
+            if self.is_running:
+                port = self.port.get()
+                url = f"http://127.0.0.1:{port}/api/health"
+                try:
+                    with urllib.request.urlopen(url, timeout=3) as response:
+                        if response.getcode() == 200:
+                            failure_count = 0 # 重置失败计数
+                except Exception as e:
+                    failure_count += 1
+                    self.log(f"[监控] 健康检查失败 ({failure_count}/3): {e}", "warn")
+                
+                if failure_count >= 3:
+                    self.log("[监控] 服务响应异常，正在尝试自动修复...", "error")
+                    self._trigger_auto_restart()
+                    failure_count = 0 # 重置以免重复触发
+                    time.sleep(10) # 冷却时间
+            
+            time.sleep(10) # 每10秒检查一次
+
+    def _trigger_auto_restart(self):
+        """触发自动重启流程"""
+        if self.restart_attempt_count >= 3:
+             self.log("[监控] 自动修复失败次数过多，请检查端口占用或手动重启", "error")
+             return
+
+        self.restart_attempt_count += 1
+        self.log(f"[系统] 正在执行第 {self.restart_attempt_count} 次自动重启...", "warn")
+        
+        # 1. 尝试停止服务
+        self.master.after(0, self.stop_server)
+        
+        # 2. 尝试强制清理端口占用 (如果停止失败)
+        time.sleep(2)
+        port = self.port.get()
+        self._kill_process_on_port(port)
+        
+        # 3. 重新启动
+        time.sleep(2)
+        self.master.after(0, self.start_server)
+
+    def _kill_process_on_port(self, port):
+        """尝试杀掉占用指定端口的进程"""
+        try:
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    for conn in proc.connections():
+                        if conn.laddr.port == port:
+                             self.log(f"[系统] 发现占用端口 {port} 的进程 {proc.info['name']} (PID: {proc.info['pid']})，正在清理...", "warn")
+                             proc.kill()
+                             return
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception as e:
+            self.log(f"[系统] 清理端口占用失败: {e}", "warn")
+
+    def _on_server_start_failed(self, error_msg):
+        self.is_running = False
+        self.status_label.config(text="● 启动失败", bootstyle="danger")
+        self.start_btn.config(state=NORMAL)
+        self.stop_btn.config(state=DISABLED)
+        self.open_btn.config(state=DISABLED)
+        messagebox.showerror("启动失败", f"服务启动失败: {error_msg}\n请尝试更换端口或检查是否有其他程序占用。")
+
     def start_server(self):
         if self.is_running:
             return
@@ -367,12 +561,15 @@ class ServerUI:
         if not (1024 <= port <= 65535):
             messagebox.showerror("端口错误", "端口号必须在1024-65535之间！")
             return
-        self.is_running = True
-        self.status_label.config(text=f"运行中 (http://{LOCAL_IP}:{port})", fg="#388e3c")
+            
+        # 预检查端口
+        if self.is_port_in_use(port):
+             messagebox.showerror("启动失败", f"端口 {port} 已被占用，请更换端口！")
+             return
+
         self.start_btn.config(state=tk.DISABLED)
-        self.stop_btn.config(state=tk.NORMAL)
-        self.open_btn.config(state=tk.NORMAL)
         self.log(f"[INFO] 服务启动中，端口:{port} ...")
+        
         def flask_thread():
             import logging
             from werkzeug.serving import make_server
@@ -388,8 +585,18 @@ class ServerUI:
                     self.srv.serve_forever()
                 def shutdown(self):
                     self.srv.shutdown()
-            self.flask_server = FlaskServerThread(app, self.log)
-            self.flask_server.start()
+            
+            try:
+                self.flask_server = FlaskServerThread(app, self.log)
+                self.flask_server.start()
+                # 成功启动，回调 UI
+                self.master.after(0, lambda: self._on_server_started(port))
+            except Exception as e:
+                # 启动失败，回调 UI
+                err = str(e)
+                self.log(f"[ERROR] Flask服务启动异常: {err}", "error")
+                self.master.after(0, lambda: self._on_server_start_failed(err))
+
         self.flask_server = None
         self.server_thread = threading.Thread(target=flask_thread, daemon=True)
         self.server_thread.start()
@@ -398,10 +605,11 @@ class ServerUI:
         if not self.is_running:
             return
         self.is_running = False
-        self.status_label.config(text="服务已停止", fg="red")
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        self.open_btn.config(state=tk.DISABLED)
+        self.status_label.config(text="● 已停止", bootstyle="secondary")
+
+        self.start_btn.config(state=NORMAL)
+        self.stop_btn.config(state=DISABLED)
+        self.open_btn.config(state=DISABLED)
         self.log("[INFO] 服务已停止。请关闭窗口退出进程。", "warn")
         # 优雅关闭 Flask 服务，不退出主程序
         if hasattr(self, 'flask_server') and self.flask_server:
@@ -527,6 +735,7 @@ class ServerUI:
 
     def quit(self, *args):
         self._stop_soda_monitor()  # 停止监控线程
+        self.health_check_running = False # 停止健康检查
         self.cleanup_resources()
         if self.tray_icon:
             try:
@@ -546,7 +755,11 @@ class LogToTk:
 
 def main():
     root = tk.Tk()
+    # 隐藏主窗口，直到构建完成
+    root.withdraw()
     ui = ServerUI(root)
+    # 构建完成后显示
+    root.deiconify()
     root.mainloop()
 
 if __name__ == '__main__':

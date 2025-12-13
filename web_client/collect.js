@@ -115,26 +115,56 @@ function fetchWithTimeout(resource, options = {}) {
 }
 
 // 初始状态检测和自动轮询
+let lastConnectionState = null; // 'CONNECTED', 'WAITING', 'DISCONNECTED'
+let failureCount = 0; // 连续失败计数
+const FAILURE_THRESHOLD = 3; // 连续失败多少次才判定为断开
+
 function checkAndUpdateState() { 
-    fetchWithTimeout(apiBase + '/status', { method: 'GET', timeout: 1000 })
+    // 增加超时时间到 3000ms，防止网络波动或服务器响应慢导致误判
+    fetchWithTimeout(apiBase + '/status', { method: 'GET', timeout: 3000 })
         .then(r => { 
             if (r.status === 200) {
-                isConnected = true;
-                updateConnectionUI(true);
-                setButtonState(true);
+                // 连接成功，重置失败计数
+                failureCount = 0;
+                
+                // 只有状态改变时才刷新UI
+                if (lastConnectionState !== 'CONNECTED') {
+                    isConnected = true;
+                    updateConnectionUI(true);
+                    setButtonState(true);
+                    lastConnectionState = 'CONNECTED';
+                }
             } else {
-                isConnected = false;
-                updateConnectionUI(false);
-                // 状态码非200（如503），说明连接上了服务器但检测不到汽水音乐
-                // 此时允许点击播放按钮以尝试自动启动
-                setButtonState(false, true);
+                // 连接上服务器但状态异常（如503未检测到进程）
+                // 这种情况下通常不是网络问题，而是业务状态，所以可以立即更新（或者也稍微缓冲一下？）
+                // 这里选择立即更新，因为响应是明确的
+                failureCount = 0; // 服务器是通的，重置网络失败计数
+                
+                if (lastConnectionState !== 'WAITING') {
+                    isConnected = false;
+                    updateConnectionUI(false);
+                    // 状态码非200（如503），说明连接上了服务器但检测不到汽水音乐
+                    // 此时允许点击播放按钮以尝试自动启动
+                    setButtonState(false, true);
+                    lastConnectionState = 'WAITING';
+                }
             }
         })
         .catch((e) => { 
-            isConnected = false;
-            updateConnectionUI(false);
-            // 网络错误，完全无法连接
-            setButtonState(false, false);
+            // 网络请求失败（超时、断网等）
+            failureCount++;
+            console.warn(`状态检查失败 (${failureCount}/${FAILURE_THRESHOLD}):`, e);
+
+            // 只有连续失败达到阈值，才更新为断开状态
+            if (failureCount >= FAILURE_THRESHOLD) {
+                if (lastConnectionState !== 'DISCONNECTED') {
+                    isConnected = false;
+                    updateConnectionUI(false);
+                    // 网络错误，完全无法连接
+                    setButtonState(false, false);
+                    lastConnectionState = 'DISCONNECTED';
+                }
+            }
         });
 }
 

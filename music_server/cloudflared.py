@@ -18,6 +18,14 @@ class Cloudflared:
         # Determine base directory for storing binary
         if getattr(sys, 'frozen', False):
             # Running as compiled exe
+            # First check if bundled in _MEIPASS (where PyInstaller unpacks datas)
+            if hasattr(sys, '_MEIPASS'):
+                bundled_path = os.path.join(sys._MEIPASS, self.bin_name)
+                if os.path.exists(bundled_path):
+                    self.bin_path = bundled_path
+                    return
+
+            # If not found in bundle, use exe dir (so it can be downloaded there)
             base_dir = os.path.dirname(sys.executable)
         else:
             # Running as script, use current working directory
