@@ -43,6 +43,70 @@ class QishuiController:
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
+    def system_shutdown(self, delay_seconds=10, force=False):
+        try:
+            if os.name != 'nt':
+                return {'status': 'error', 'message': '当前系统不支持该关机指令'}
+
+            try:
+                delay_seconds = int(delay_seconds)
+            except Exception:
+                return {'status': 'error', 'message': 'delay_seconds必须为整数'}
+
+            delay_seconds = max(0, min(3600, delay_seconds))
+
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            cmd = ["shutdown", "/s", "/t", str(delay_seconds)]
+            if force:
+                cmd.append("/f")
+
+            Logger.warning(f"执行系统关机指令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
+            return {
+                'status': 'ok',
+                'action': 'shutdown',
+                'delay_seconds': delay_seconds,
+                'stdout': (result.stdout or '').strip(),
+                'stderr': (result.stderr or '').strip(),
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
+    def system_restart(self, delay_seconds=10, force=False):
+        try:
+            if os.name != 'nt':
+                return {'status': 'error', 'message': '当前系统不支持该重启指令'}
+
+            try:
+                delay_seconds = int(delay_seconds)
+            except Exception:
+                return {'status': 'error', 'message': 'delay_seconds必须为整数'}
+
+            delay_seconds = max(0, min(3600, delay_seconds))
+
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            cmd = ["shutdown", "/r", "/t", str(delay_seconds)]
+            if force:
+                cmd.append("/f")
+
+            Logger.warning(f"执行系统重启指令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
+            return {
+                'status': 'ok',
+                'action': 'restart',
+                'delay_seconds': delay_seconds,
+                'stdout': (result.stdout or '').strip(),
+                'stderr': (result.stderr or '').strip(),
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
     def play_pause(self):
         # 检查是否运行
         soda_running = any(p.name() == "SodaMusic.exe" for p in psutil.process_iter(['name']))

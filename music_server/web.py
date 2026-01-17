@@ -12,6 +12,9 @@ qishui = QishuiController()
 def log_request_info(response):
     if response.status_code == 404:
         Logger.warning(f"404 Not Found: {request.method} {request.url}")
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 @app.route('/api/health', methods=['GET'])
@@ -71,6 +74,28 @@ def run_cmd():
     if not cmd:
         return jsonify({'status': 'error', 'message': '缺少cmd参数'}), 400
     return jsonify(qishui.run_shell_command(cmd))
+
+@app.route('/api/system/shutdown', methods=['POST'])
+def system_shutdown():
+    data = request.get_json() or {}
+    confirm = data.get('confirm')
+    if confirm != '关机':
+        return jsonify({'status': 'error', 'message': '需要confirm=关机以确认操作'}), 400
+    delay_seconds = data.get('delay_seconds', 30)
+    force = bool(data.get('force', False))
+    Logger.warning(f"接收到系统关机命令, delay_seconds={delay_seconds}, force={force}")
+    return jsonify(qishui.system_shutdown(delay_seconds=delay_seconds, force=force))
+
+@app.route('/api/system/restart', methods=['POST'])
+def system_restart():
+    data = request.get_json() or {}
+    confirm = data.get('confirm')
+    if confirm != '重启':
+        return jsonify({'status': 'error', 'message': '需要confirm=重启以确认操作'}), 400
+    delay_seconds = data.get('delay_seconds', 30)
+    force = bool(data.get('force', False))
+    Logger.warning(f"接收到系统重启命令, delay_seconds={delay_seconds}, force={force}")
+    return jsonify(qishui.system_restart(delay_seconds=delay_seconds, force=force))
 
 @app.route('/')
 def web_index():

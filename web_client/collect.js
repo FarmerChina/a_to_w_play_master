@@ -282,3 +282,83 @@ function sendCmd() {
         console.error(e);
     });
 }
+
+function shutdownPC() {
+    const confirmText = window.prompt('危险操作：请输入“关机”以确认执行')
+    if (confirmText !== '关机') {
+        showNotification('已取消', false);
+        return;
+    }
+
+    const delayInput = window.prompt('请输入延时秒数(0-3600)，默认30', '30');
+    if (delayInput === null) {
+        showNotification('已取消', false);
+        return;
+    }
+
+    const delaySeconds = Number.parseInt(String(delayInput).trim(), 10);
+    if (Number.isNaN(delaySeconds) || delaySeconds < 0) {
+        showNotification('延时秒数不合法', false);
+        return;
+    }
+
+    fetch(apiBase + '/system/shutdown', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: '关机', delay_seconds: delaySeconds})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            showNotification(`关机指令已下发(${res.delay_seconds ?? delaySeconds}s)`);
+            showMsg('关机操作已执行');
+        } else {
+            showNotification('关机失败', false);
+            showMsg('错误: ' + (res.message || '未知错误'), false);
+        }
+    })
+    .catch(e => {
+        showNotification('请求失败', false);
+        console.error(e);
+    });
+}
+
+function restartPC() {
+    const confirmText = window.prompt('危险操作：请输入“重启”以确认执行')
+    if (confirmText !== '重启') {
+        showNotification('已取消', false);
+        return;
+    }
+
+    const delayInput = window.prompt('请输入延时秒数(0-3600)，默认30', '30');
+    if (delayInput === null) {
+        showNotification('已取消', false);
+        return;
+    }
+
+    const delaySeconds = Number.parseInt(String(delayInput).trim(), 10);
+    if (Number.isNaN(delaySeconds) || delaySeconds < 0) {
+        showNotification('延时秒数不合法', false);
+        return;
+    }
+
+    fetch(apiBase + '/system/restart', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: '重启', delay_seconds: delaySeconds})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'ok') {
+            showNotification(`重启指令已下发(${res.delay_seconds ?? delaySeconds}s)`);
+            showMsg('重启操作已执行');
+        } else {
+            showNotification('重启失败', false);
+            showMsg('错误: ' + (res.message || '未知错误'), false);
+        }
+    })
+    .catch(e => {
+        showNotification('请求失败', false);
+        console.error(e);
+    });
+}

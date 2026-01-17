@@ -5,6 +5,7 @@ import time
 import threading
 import re
 import shutil
+from collections import deque
 from urllib import request
 from .logger import Logger
 
@@ -73,8 +74,15 @@ class Cloudflared:
             if not self.download():
                 raise Exception("无法下载 Cloudflared 组件")
 
-        # Command to start quick tunnel
-        cmd = [self.bin_path, "tunnel", "--url", f"http://localhost:{port}"]
+        cmd = [
+            self.bin_path,
+            "tunnel",
+            "--url",
+            f"http://127.0.0.1:{port}",
+            "--no-autoupdate",
+            "--loglevel",
+            "info",
+        ]
         
         # Hide window on Windows
         startupinfo = None
@@ -88,7 +96,7 @@ class Cloudflared:
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 startupinfo=startupinfo,
                 text=True,
@@ -96,19 +104,20 @@ class Cloudflared:
                 universal_newlines=True
             )
             
-            # We need to capture the URL from stderr (Cloudflared prints info to stderr)
+            output_tail = deque(maxlen=200)
             self.url = None
             
             def read_stream():
-                """Thread to read stderr and find the URL"""
+                """Thread to read output and find the URL"""
                 while self.process and self.process.poll() is None:
                     try:
-                        line = self.process.stderr.readline()
+                        line = self.process.stdout.readline()
                         if not line:
                             break
+                        output_tail.append(line)
                         # Check for URL pattern
                         # Example: https://cool-name.trycloudflare.com
-                        match = re.search(r'https://[\w-]+\.trycloudflare\.com', line)
+                        match = re.search(r'https://[^\s]+\.trycloudflare\.com', line)
                         if match:
                             self.url = match.group(0)
                             Logger.info(f"Cloudflare Tunnel 已建立: {self.url}")
@@ -119,7 +128,7 @@ class Cloudflared:
             t.start()
             
             # Wait for URL (up to 30 seconds)
-            for _ in range(60): 
+            for _ in range(120): 
                 if self.url:
                     return self.url
                 if self.process.poll() is not None:
@@ -129,9 +138,9 @@ class Cloudflared:
             if not self.url:
                 # Check if process exited
                 if self.process.poll() is not None:
-                    _, err = self.process.communicate()
-                    raise Exception(f"Cloudflared 启动失败: {err}")
-                raise Exception("获取 Cloudflare Tunnel URL 超时")
+                    out, _ = self.process.communicate()
+                    raise Exception(f"Cloudflared 启动失败: {out}")
+                raise Exception("获取 Cloudflare Tunnel URL 超时: " + "".join(list(output_tail)[-30:]).strip())
                 
         except Exception as e:
             self.stop()

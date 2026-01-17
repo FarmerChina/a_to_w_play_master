@@ -244,3 +244,29 @@
             pointer-events: none;
             filter: grayscale(60%);
         }
+
+        .btn-shutdown {
+            background: linear-gradient(135deg, var(--danger-color), #b71c1c);
+            color: #fff;
+            border: none;
+            box-shadow: 0 4px 12px rgba(244,67,54,0.12);
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .btn-shutdown:hover, .btn-shutdown:active {
+            background: linear-gradient(135deg, #b71c1c, var(--danger-color));
+            color: #fff;
+            box-shadow: 0 6px 16px rgba(244,67,54,0.18);
+        }
+
+        .btn-restart {
+            background: linear-gradient(135deg, #ff9800, #ef6c00);
+            color: #fff;
+            border: none;
+            box-shadow: 0 4px 12px rgba(255,152,0,0.12);
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .btn-restart:hover, .btn-restart:active {
+            background: linear-gradient(135deg, #ef6c00, #ff9800);
+            color: #fff;
+            box-shadow: 0 6px 16px rgba(255,152,0,0.18);
+        }

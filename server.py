@@ -410,7 +410,7 @@ class ServerUI:
     def log(self, msg, level="info"):
         print(f"[{level.upper()}] {msg}")
         # 只保留关键日志，过滤掉频繁的监控和状态日志
-        if any(x in msg for x in ["服务启动中", "服务已停止", "Flask服务已启动", "Flask服务关闭异常", "Flask服务启动失败", "检测到汽水音乐已启动", "汽水音乐已退出", "邮件发送成功", "邮件发送失败"]):
+        if any(x in msg for x in ["服务启动中", "服务已停止", "Flask服务已启动", "Flask服务关闭异常", "Flask服务启动失败", "检测到汽水音乐已启动", "汽水音乐已退出", "邮件发送成功", "邮件发送失败", "[远程]"]):
             self.log_queue.put((msg, level))
         # 其它日志不再写入，防止内存溢出
 
