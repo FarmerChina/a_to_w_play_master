@@ -284,23 +284,9 @@ function sendCmd() {
 }
 
 function shutdownPC() {
-    const confirmText = window.prompt('危险操作：请输入“关机”以确认执行')
-    if (confirmText !== '关机') {
-        showNotification('已取消', false);
-        return;
-    }
-
-    const delayInput = window.prompt('请输入延时秒数(0-3600)，默认30', '30');
-    if (delayInput === null) {
-        showNotification('已取消', false);
-        return;
-    }
-
-    const delaySeconds = Number.parseInt(String(delayInput).trim(), 10);
-    if (Number.isNaN(delaySeconds) || delaySeconds < 0) {
-        showNotification('延时秒数不合法', false);
-        return;
-    }
+    const delaySeconds = 3;
+    const ok = window.confirm(`确认关机？（${delaySeconds}s后执行）`);
+    if (!ok) return;
 
     fetch(apiBase + '/system/shutdown', {
         method: 'POST',
@@ -324,23 +310,9 @@ function shutdownPC() {
 }
 
 function restartPC() {
-    const confirmText = window.prompt('危险操作：请输入“重启”以确认执行')
-    if (confirmText !== '重启') {
-        showNotification('已取消', false);
-        return;
-    }
-
-    const delayInput = window.prompt('请输入延时秒数(0-3600)，默认30', '30');
-    if (delayInput === null) {
-        showNotification('已取消', false);
-        return;
-    }
-
-    const delaySeconds = Number.parseInt(String(delayInput).trim(), 10);
-    if (Number.isNaN(delaySeconds) || delaySeconds < 0) {
-        showNotification('延时秒数不合法', false);
-        return;
-    }
+    const delaySeconds = 3;
+    const ok = window.confirm(`确认重启？（${delaySeconds}s后执行）`);
+    if (!ok) return;
 
     fetch(apiBase + '/system/restart', {
         method: 'POST',
